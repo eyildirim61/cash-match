@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cash Match</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Match incoming payments to open invoices, in your browser.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: a ledger. Two inputs on top, a summary strip, then one row per payment.
+   Palette: cool paper, ledger green for matched money, amber for "check this", red for unmatched. */
+:root {
+  --bg: #f3f5f4;
+  --surface: #ffffff;
+  --ink: #16201c;
+  --muted: #5c6a64;
+  --line: #dbe2df;
+  --accent: #0f6b4f;
+  --accent-soft: #e3f1ec;
+  --amber: #8a5a00;
+  --amber-soft: #fff1d2;
+  --red: #a8321f;
+  --red-soft: #fbe6e2;
+  --blue: #245ea8;
+  --blue-soft: #e4edf9;
+  --font: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1513; --surface: #17201d; --ink: #e5ece9; --muted: #98a7a0; --line: #2a3632;
+    --accent: #5fd0a6; --accent-soft: #143528; --amber: #f2c14e; --amber-soft: #33280f;
+    --red: #ff8f7a; --red-soft: #3a1914; --blue: #8fb6ef; --blue-soft: #15243a; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1513; --surface: #17201d; --ink: #e5ece9; --muted: #98a7a0; --line: #2a3632;
+  --accent: #5fd0a6; --accent-soft: #143528; --amber: #f2c14e; --amber-soft: #33280f;
+  --red: #ff8f7a; --red-soft: #3a1914; --blue: #8fb6ef; --blue-soft: #15243a; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 var(--font);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.page { max-width: 1240px; margin: 0 auto; padding-block: 28px 64px; display: grid; gap: 18px; }
+header.top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: end; gap: 12px 24px; }
+h1 { margin: 0; font-size: clamp(26px, 4vw, 36px); font-weight: 700; letter-spacing: -0.015em; text-wrap: balance; }
+.tagline { margin: 4px 0 0; color: var(--muted); max-width: 70ch; }
+.privacy { display: inline-flex; gap: 6px; align-items: center; margin-top: 8px; font-size: 13px; color: var(--accent); font-weight: 600; }
+.lang { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; background: var(--surface); }
+.lang button { border: 0; background: transparent; color: var(--muted); font: 600 13px var(--font); padding: 6px 12px; cursor: pointer; }
+.lang button[aria-pressed="true"] { background: var(--accent); color: var(--surface); }
+
+.inputs { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: 14px; }
+.drop { background: var(--surface); border: 1px dashed var(--line); border-radius: 12px; padding: 16px; display: grid; gap: 10px; min-width: 0; }
+.drop.over { border-color: var(--accent); background: var(--accent-soft); }
+.drop h2 { margin: 0; font-size: 16px; }
+.drop .hint { margin: 0; color: var(--muted); font-size: 13px; }
+.drop .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.file-btn { position: relative; overflow: hidden; display: inline-flex; border: 1px solid var(--accent); color: var(--accent);
+  border-radius: 8px; padding: 6px 12px; font-weight: 600; font-size: 14px; cursor: pointer; background: var(--surface); }
+.file-btn input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.status { font-size: 13px; color: var(--muted); }
+.status.ok { color: var(--accent); font-weight: 600; }
+.status.bad { color: var(--red); font-weight: 600; }
+details.map summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+.map-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; margin-top: 8px; }
+.map-grid label { display: grid; gap: 2px; font-size: 12px; color: var(--muted); }
+select, input[type="number"] { font: 14px var(--font); color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+  border-radius: 8px; padding: 5px 8px; max-width: 100%; }
+
+.toolbar { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; background: var(--surface); border: 1px solid var(--line);
+  border-radius: 12px; padding: 12px 16px; }
+.toolbar label { display: inline-flex; gap: 8px; align-items: center; font-size: 14px; color: var(--muted); }
+.toolbar input[type="number"] { width: 6em; font-family: var(--mono); }
+.btn { border: 1px solid var(--accent); background: var(--accent); color: var(--surface); border-radius: 8px; padding: 7px 14px;
+  font: 600 14px var(--font); cursor: pointer; }
+.btn.ghost { background: transparent; color: var(--accent); }
+.linkbtn { border: 0; background: none; color: var(--accent); font: 600 14px var(--font); cursor: pointer; padding: 4px 0; }
+.spacer { flex: 1; }
+.toast { color: var(--accent); font-weight: 600; font-size: 13px; }
+
+.summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.stat { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; display: grid; gap: 2px; }
+.stat .n { font: 600 22px var(--mono); font-variant-numeric: tabular-nums; }
+.stat .l { color: var(--muted); font-size: 12px; }
+.stat.green .n { color: var(--accent); } .stat.amber .n { color: var(--amber); } .stat.red .n { color: var(--red); }
+
+.filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.filters button { border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 999px; padding: 4px 12px;
+  font: 500 13px var(--font); cursor: pointer; }
+.filters button[aria-pressed="true"] { border-color: var(--ink); font-weight: 700; }
+
+.ledger { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.pay { display: grid; grid-template-columns: 150px minmax(0, 1.2fr) 130px minmax(0, 1.6fr); gap: 6px 18px; padding: 14px 16px;
+  border-bottom: 1px solid var(--line); align-items: start; }
+.pay:last-child { border-bottom: 0; }
+.pay.overridden { background: var(--blue-soft); }
+@media (max-width: 900px) { .pay { grid-template-columns: minmax(0, 1fr) auto; } .pay .desc, .pay .match { grid-column: 1 / -1; } }
+.pill { display: inline-block; border-radius: 999px; padding: 1px 10px; font-size: 12px; font-weight: 700; }
+.pill.certain { color: var(--accent); background: var(--accent-soft); }
+.pill.high { color: var(--accent); background: var(--accent-soft); border: 1px dashed var(--accent); }
+.pill.review { color: var(--amber); background: var(--amber-soft); }
+.pill.low { color: var(--red); background: var(--red-soft); }
+.pill.unmatched { color: var(--red); background: transparent; border: 1px solid var(--red); }
+.pill.manual { color: var(--blue); background: var(--blue-soft); }
+.when { font-size: 12px; color: var(--muted); font-family: var(--mono); margin-top: 4px; }
+.desc { overflow-wrap: anywhere; }
+.desc .payer { font-weight: 600; }
+.desc .memo { color: var(--muted); font-size: 13px; font-family: var(--mono); }
+.amount { font: 600 17px var(--mono); text-align: right; font-variant-numeric: tabular-nums; }
+.match { display: grid; gap: 6px; min-width: 0; }
+.inv-list { display: grid; gap: 2px; }
+.inv { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; font-size: 14px; }
+.inv .num { font-family: var(--mono); font-weight: 600; overflow-wrap: anywhere; }
+.inv .cust { color: var(--muted); font-size: 13px; }
+.inv .amt { font-family: var(--mono); text-align: right; font-variant-numeric: tabular-nums; }
+.diff { font-family: var(--mono); font-size: 13px; }
+.diff.neg { color: var(--amber); } .diff.pos { color: var(--blue); }
+.why { color: var(--muted); font-size: 13px; margin: 0; padding-left: 16px; }
+.choice { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 13px; color: var(--muted); }
+.choice select { min-width: 0; flex: 1 1 240px; }
+.conflict { color: var(--red); font-size: 13px; font-weight: 600; }
+.empty { padding: 28px 16px; color: var(--muted); text-align: center; }
+footer { color: var(--muted); font-size: 13px; max-width: 90ch; display: grid; gap: 6px; }
+button:focus-visible, select:focus-visible, input:focus-visible, summary:focus-visible, .file-btn:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="top">
+    <div>
+      <h1 id="title">Cash Match</h1>
+      <p class="tagline" id="tagline"></p>
+      <div class="privacy" id="privacy"></div>
+    </div>
+    <div class="lang" role="group" aria-label="Language">
+      <button type="button" id="lang-en" aria-pressed="true">EN</button>
+      <button type="button" id="lang-tr" aria-pressed="false">TR</button>
+    </div>
+  </header>
+
+  <section class="inputs">
+    <div class="drop" id="drop-payments">
+      <h2 id="h-payments"></h2>
+      <p class="hint" id="hint-payments"></p>
+      <div class="row">
+        <label class="file-btn"><span id="pick-payments"></span><input type="file" id="file-payments" accept=".csv,.txt,.tsv,.xlsx,.xls"></label>
+        <span class="status" id="status-payments"></span>
+      </div>
+      <details class="map" id="map-payments"><summary id="sum-map-payments"></summary><div class="map-grid" id="grid-payments"></div></details>
+    </div>
+    <div class="drop" id="drop-invoices">
+      <h2 id="h-invoices"></h2>
+      <p class="hint" id="hint-invoices"></p>
+      <div class="row">
+        <label class="file-btn"><span id="pick-invoices"></span><input type="file" id="file-invoices" accept=".csv,.txt,.tsv,.xlsx,.xls"></label>
+        <span class="status" id="status-invoices"></span>
+      </div>
+      <details class="map" id="map-invoices"><summary id="sum-map-invoices"></summary><div class="map-grid" id="grid-invoices"></div></details>
+    </div>
+  </section>
+
+  <section class="toolbar">
+    <button type="button" class="linkbtn" id="sample"></button>
+    <label><span id="lbl-fee"></span> <input type="number" id="fee" min="0" step="1" value="50"></label>
+    <label><span id="lbl-disc"></span>
+      <select id="disc"><option value="0.01,0.02">1%, 2%</option><option value="0.02">2%</option><option value="">—</option></select>
+    </label>
+    <span class="spacer"></span>
+    <span class="toast" id="toast" role="status" aria-live="polite"></span>
+    <button type="button" class="btn ghost" id="copy"></button>
+    <button type="button" class="btn" id="download"></button>
+  </section>
+
+  <section class="summary" id="summary" aria-live="polite"></section>
+  <div class="filters" id="filters" role="group"></div>
+  <section class="ledger" id="ledger"></section>
+  <footer id="footer"></footer>
+</div>
+<script type="module" src="./src/app.js"></script>
+</body>
+</html>
